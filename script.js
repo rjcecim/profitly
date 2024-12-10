@@ -12,18 +12,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const rentabilidadeDiariaChartCtx = document.getElementById('rentabilidadeDiariaChart').getContext('2d')
     let rendimentoChartInstance = null
     let rentabilidadeDiariaChartInstance = null
+
     const formatarValor = (valor) => {
         return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor)
     }
-    const isDiaUtil = (date) => {
-        const dia = date.getDay()
-        return dia !== 0 && dia !== 6
+
+    // Retorna true se a data (ano, mes, dia) for um dia útil (segunda a sexta)
+    const isDiaUtil = (ano, mes, dia) => {
+        const date = new Date(Date.UTC(ano, mes - 1, dia))
+        const weekDay = date.getUTCDay()
+        return weekDay !== 0 && weekDay !== 6
     }
+
     const obterFeriadosNacionais = async (ano) => {
         const response = await fetch(`https://brasilapi.com.br/api/feriados/v1/${ano}`)
         if (!response.ok) throw new Error()
         return await response.json()
     }
+
     const obterTaxaDiaria = async (ano) => {
         const dataInicial = `01/01/${ano}`
         const dataFinal = `31/12/${ano}`
@@ -38,61 +44,94 @@ document.addEventListener('DOMContentLoaded', () => {
             return new Date(anoA, mesA - 1, diaA) - new Date(anoB, mesB - 1, diaB)
         })
         const ultimaTaxa = parseFloat(data[data.length - 1].valor)
-        const taxaDecimal = ultimaTaxa / 100
-        return taxaDecimal
+        return ultimaTaxa / 100
     }
+
     const obterAliquotaIR = (dias) => {
         if (dias <= 180) return 0.225
         else if (dias <= 360) return 0.20
         else if (dias <= 720) return 0.175
         else return 0.15
     }
+
+    // Soma dias a uma data no formato YYYY-MM-DD
+    const adicionarDias = (data, dias) => {
+        const [ano, mes, dia] = data.split('-').map(v => parseInt(v, 10))
+        const d = new Date(Date.UTC(ano, mes - 1, dia))
+        d.setUTCDate(d.getUTCDate() + dias)
+        const anoNovo = d.getUTCFullYear()
+        const mesNovo = String(d.getUTCMonth() + 1).padStart(2, '0')
+        const diaNovo = String(d.getUTCDate()).padStart(2, '0')
+        return `${anoNovo}-${mesNovo}-${diaNovo}`
+    }
+
+    // Formata data YYYY-MM-DD para dd/MM/yyyy
+    const formatarDataPtBr = (dataIso) => {
+        const [ano, mes, dia] = dataIso.split('-')
+        return `${dia}/${mes}/${ano}`
+    }
+
     simulationForm.addEventListener('submit', async (event) => {
         event.preventDefault()
         let valorInvestido = parseFloat(valorInvestidoInput.value.replace(/[^0-9,-]+/g, '').replace(',', '.'))
-        const dataInvestimento = new Date(dataInvestimentoInput.value)
+        const dataInvest = dataInvestimentoInput.value
         const periodoDias = parseInt(periodoDiasInput.value, 10)
-        if (isNaN(valorInvestido) || isNaN(periodoDias) || isNaN(dataInvestimento.getTime())) {
+
+        if (isNaN(valorInvestido) || isNaN(periodoDias) || !/^\d{4}-\d{2}-\d{2}$/.test(dataInvest)) {
             alert('Preencha todos os campos corretamente.')
             return
         }
+
         projectionList.innerHTML = ''
         feriadosTableBody.innerHTML = ''
         resultSection.style.display = 'none'
         loadingIndicator.style.display = 'block'
-        const anoAtual = dataInvestimento.getFullYear()
-        const feriadosNacionais = await obterFeriadosNacionais(anoAtual)
-        feriadosNacionais.forEach(feriado => {
-            const tr = document.createElement('tr')
-            const dataFeriado = new Date(feriado.date)
-            tr.innerHTML = `<td>${dataFeriado.toLocaleDateString('pt-BR')}</td><td>${feriado.name}</td>`
-            feriadosTableBody.appendChild(tr)
-        })
-        const feriadosSet = new Set(feriadosNacionais.map(f => f.date))
-        const taxaDiariaDecimal = await obterTaxaDiaria(anoAtual)
+
+        const feriadosMap = new Map()
+        const feriadosSet = new Set()
+
+        const carregarFeriadosAno = async (ano) => {
+            if (!feriadosMap.has(ano)) {
+                const feriadosNacionais = await obterFeriadosNacionais(ano)
+                feriadosMap.set(ano, feriadosNacionais)
+                feriadosNacionais.forEach(feriado => {
+                    // Adiciona ao conjunto (Set) sem nenhuma conversão
+                    feriadosSet.add(feriado.date)
+                })
+            }
+        }
+
+        const anoInicial = parseInt(dataInvest.split('-')[0], 10)
+        await carregarFeriadosAno(anoInicial)
+
+        const taxaDiariaDecimal = await obterTaxaDiaria(anoInicial)
         loadingIndicator.style.display = 'none'
+
         if (taxaDiariaDecimal === null) {
             alert('Não foi possível obter a Taxa Diária (CDI).')
             return
         }
+
         const cdiAnual = Math.pow(1 + taxaDiariaDecimal, 252) - 1
         taxaAnualDisplay.textContent = (cdiAnual * 100).toFixed(2)
         const taxaDiaria = taxaDiariaDecimal
         const aliquotaIR = obterAliquotaIR(periodoDias)
+
         let diasContados = 0
-        let dataAtual = new Date(dataInvestimento)
+        let dataAtual = dataInvest
         const labels = []
         const dadosBrutos = []
         const dadosLiquidos = []
         const variacaoDiaria = []
         let valorAnterior = valorInvestido
+        const datasSimuladas = []
+
         while (diasContados < periodoDias) {
-            dataAtual.setDate(dataAtual.getDate() + 1)
-            const ano = dataAtual.getFullYear()
-            const mes = String(dataAtual.getMonth() + 1).padStart(2, '0')
-            const dia = String(dataAtual.getDate()).padStart(2, '0')
-            const dataFormatada = `${ano}-${mes}-${dia}`
-            if (isDiaUtil(dataAtual) && !feriadosSet.has(dataFormatada)) {
+            dataAtual = adicionarDias(dataAtual, 1)
+            const [ano, mes, dia] = dataAtual.split('-').map(v => parseInt(v, 10))
+            if (!feriadosMap.has(ano)) await carregarFeriadosAno(ano)
+
+            if (isDiaUtil(ano, mes, dia) && !feriadosSet.has(dataAtual)) {
                 diasContados++
                 const rendimentoDiaBruto = valorInvestido * taxaDiaria
                 const rendimentoDiaLiquido = rendimentoDiaBruto * (1 - aliquotaIR)
@@ -102,7 +141,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 listItem.innerHTML = `
                     <div class="d-flex justify-content-between align-items-center">
                         <div>
-                            <strong>Dia ${dataAtual.toLocaleDateString('pt-BR')}</strong><br>
+                            <strong>Dia ${formatarDataPtBr(dataAtual)}</strong><br>
                             Rendimento Bruto: ${formatarValor(rendimentoDiaBruto)}<br>
                             Rendimento Líquido: ${formatarValor(rendimentoDiaLiquido)}
                         </div>
@@ -110,14 +149,32 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 `
                 projectionList.appendChild(listItem)
-                labels.push(dataAtual.toLocaleDateString('pt-BR'))
+                labels.push(formatarDataPtBr(dataAtual))
                 dadosBrutos.push((valorInvestido - rendimentoDiaLiquido).toFixed(2))
                 dadosLiquidos.push(valorInvestido.toFixed(2))
                 variacaoDiaria.push((valorInvestido - valorAnterior).toFixed(2))
                 valorAnterior = valorInvestido
+                datasSimuladas.push(dataAtual)
             }
         }
+
+        const inicioSimulacao = datasSimuladas[0]
+        const fimSimulacao = datasSimuladas[datasSimuladas.length - 1]
+
+        // Exibir apenas feriados dentro do intervalo simulado
+        feriadosMap.forEach(feriadosNacionais => {
+            feriadosNacionais.forEach(feriado => {
+                if (feriado.date >= inicioSimulacao && feriado.date <= fimSimulacao) {
+                    const dataFormatada = formatarDataPtBr(feriado.date)
+                    const tr = document.createElement('tr')
+                    tr.innerHTML = `<td>${dataFormatada}</td><td>${feriado.name}</td>`
+                    feriadosTableBody.appendChild(tr)
+                }
+            })
+        })
+
         resultSection.style.display = 'block'
+
         if (rendimentoChartInstance) rendimentoChartInstance.destroy()
         rendimentoChartInstance = new Chart(rendimentoChartCtx, {
             type: 'line',
@@ -166,27 +223,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 scales: {
                     x: {
                         display: true,
-                        title: {
-                            display: true,
-                            text: 'Data'
-                        },
-                        ticks: {
-                            maxTicksLimit: 10
-                        }
+                        title: { display: true, text: 'Data' },
+                        ticks: { maxTicksLimit: 10 }
                     },
                     y: {
                         display: true,
-                        title: {
-                            display: true,
-                            text: 'Saldo (R$)'
-                        },
+                        title: { display: true, text: 'Saldo (R$)' },
                         beginAtZero: false
                     }
                 }
             }
         })
+
         if (rentabilidadeDiariaChartInstance) rentabilidadeDiariaChartInstance.destroy()
-        const rentabilidadeDiariaLabels = labels.slice(0)
+        const rentabilidadeDiariaLabels = labels.slice()
         rentabilidadeDiariaChartInstance = new Chart(rentabilidadeDiariaChartCtx, {
             type: 'bar',
             data: {
@@ -204,44 +254,34 @@ document.addEventListener('DOMContentLoaded', () => {
             options: {
                 responsive: true,
                 plugins: {
-                    legend: {
-                        display: true
-                    },
-                    tooltip: {
-                        mode: 'index',
-                        intersect: false
-                    }
+                    legend: { display: true },
+                    tooltip: { mode: 'index', intersect: false }
                 },
                 scales: {
                     x: {
                         display: true,
-                        title: {
-                            display: true,
-                            text: 'Data'
-                        },
-                        ticks: {
-                            maxTicksLimit: 10
-                        }
+                        title: { display: true, text: 'Data' },
+                        ticks: { maxTicksLimit: 10 }
                     },
                     y: {
                         display: true,
-                        title: {
-                            display: true,
-                            text: 'Variação (R$)'
-                        },
+                        title: { display: true, text: 'Variação (R$)' },
                         beginAtZero: true
                     }
                 }
             }
         })
+
         valorInvestidoInput.value = 'R$ ' + valorInvestido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })
     })
+
     valorInvestidoInput.addEventListener('input', (event) => {
         let valor = event.target.value.replace(/\D/g, '')
         valor = (valor / 100).toFixed(2).replace('.', ',')
         valor = valor.replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1.')
         event.target.value = `R$ ${valor}`
     })
+
     periodoDiasInput.addEventListener('input', (event) => {
         let valor = event.target.value.replace(/\D/g, '')
         event.target.value = valor
