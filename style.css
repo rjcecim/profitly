@@ -27,8 +27,14 @@ section.bg-light .container {
     position: relative;
     z-index: 1;
 }
-.card {
-    border-radius: 20px;
+.bg-white {
+    background-color: #ffffff !important;
+}
+.shadow-sm {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
+}
+.rounded-3 {
+    border-radius: 0.5rem !important;
 }
 .card-title {
     font-weight: 700;
@@ -45,15 +51,10 @@ section.bg-light .container {
     max-height: 400px;
 }
 footer {
-    position: relative;
-    bottom: 0;
     width: 100%;
 }
 @media (max-width: 768px) {
     section.bg-light {
         padding: 50px 0;
-    }
-    .card {
-        margin-top: 20px;
     }
 }

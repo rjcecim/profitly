@@ -9,31 +9,29 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadingIndicator = document.getElementById('loading')
     const taxaAnualDisplay = document.getElementById('taxaAnualDisplay')
     const feriadosTableBody = document.getElementById('feriadosTableBody')
+    const rentabilidadeDiariaChartCtx = document.getElementById('rentabilidadeDiariaChart').getContext('2d')
     let rendimentoChartInstance = null
-
+    let rentabilidadeDiariaChartInstance = null
     const formatarValor = (valor) => {
         return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor)
     }
-
     const isDiaUtil = (date) => {
         const dia = date.getDay()
         return dia !== 0 && dia !== 6
     }
-
     const obterFeriadosNacionais = async (ano) => {
         const response = await fetch(`https://brasilapi.com.br/api/feriados/v1/${ano}`)
-        if (!response.ok) throw new Error('Erro ao obter feriados')
+        if (!response.ok) throw new Error()
         return await response.json()
     }
-
     const obterTaxaDiaria = async (ano) => {
         const dataInicial = `01/01/${ano}`
         const dataFinal = `31/12/${ano}`
         const url = `https://api.bcb.gov.br/dados/serie/bcdata.sgs.11/dados?formato=json&dataInicial=${dataInicial}&dataFinal=${dataFinal}`
         const response = await fetch(url)
-        if (!response.ok) throw new Error('Erro na requisição da API')
+        if (!response.ok) throw new Error()
         const data = await response.json()
-        if (data.length === 0) throw new Error('Nenhuma taxa CDI encontrada.')
+        if (data.length === 0) throw new Error()
         data.sort((a, b) => {
             const [diaA, mesA, anoA] = a.data.split('/').map(num => parseInt(num, 10))
             const [diaB, mesB, anoB] = b.data.split('/').map(num => parseInt(num, 10))
@@ -43,24 +41,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const taxaDecimal = ultimaTaxa / 100
         return taxaDecimal
     }
-
     const obterAliquotaIR = (dias) => {
         if (dias <= 180) return 0.225
         else if (dias <= 360) return 0.20
         else if (dias <= 720) return 0.175
         else return 0.15
     }
-
     simulationForm.addEventListener('submit', async (event) => {
         event.preventDefault()
         let valorInvestido = parseFloat(valorInvestidoInput.value.replace(/[^0-9,-]+/g, '').replace(',', '.'))
         const dataInvestimento = new Date(dataInvestimentoInput.value)
         const periodoDias = parseInt(periodoDiasInput.value, 10)
         if (isNaN(valorInvestido) || isNaN(periodoDias) || isNaN(dataInvestimento.getTime())) {
-            alert('Por favor, preencha todos os campos corretamente.')
+            alert('Preencha todos os campos corretamente.')
             return
         }
-
         projectionList.innerHTML = ''
         feriadosTableBody.innerHTML = ''
         resultSection.style.display = 'none'
@@ -80,18 +75,17 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Não foi possível obter a Taxa Diária (CDI).')
             return
         }
-
         const cdiAnual = Math.pow(1 + taxaDiariaDecimal, 252) - 1
         taxaAnualDisplay.textContent = (cdiAnual * 100).toFixed(2)
         const taxaDiaria = taxaDiariaDecimal
         const aliquotaIR = obterAliquotaIR(periodoDias)
-
         let diasContados = 0
         let dataAtual = new Date(dataInvestimento)
         const labels = []
         const dadosBrutos = []
         const dadosLiquidos = []
-
+        const variacaoDiaria = []
+        let valorAnterior = valorInvestido
         while (diasContados < periodoDias) {
             dataAtual.setDate(dataAtual.getDate() + 1)
             const ano = dataAtual.getFullYear()
@@ -119,9 +113,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 labels.push(dataAtual.toLocaleDateString('pt-BR'))
                 dadosBrutos.push((valorInvestido - rendimentoDiaLiquido).toFixed(2))
                 dadosLiquidos.push(valorInvestido.toFixed(2))
+                variacaoDiaria.push((valorInvestido - valorAnterior).toFixed(2))
+                valorAnterior = valorInvestido
             }
         }
-
         resultSection.style.display = 'block'
         if (rendimentoChartInstance) rendimentoChartInstance.destroy()
         rendimentoChartInstance = new Chart(rendimentoChartCtx, {
@@ -190,16 +185,63 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         })
+        if (rentabilidadeDiariaChartInstance) rentabilidadeDiariaChartInstance.destroy()
+        const rentabilidadeDiariaLabels = labels.slice(0)
+        rentabilidadeDiariaChartInstance = new Chart(rentabilidadeDiariaChartCtx, {
+            type: 'bar',
+            data: {
+                labels: rentabilidadeDiariaLabels,
+                datasets: [
+                    {
+                        label: 'Rentabilidade Líquida Diária (R$)',
+                        data: variacaoDiaria,
+                        backgroundColor: 'rgba(40, 167, 69, 0.5)',
+                        borderColor: 'rgba(40, 167, 69, 1)',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        display: true
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        title: {
+                            display: true,
+                            text: 'Data'
+                        },
+                        ticks: {
+                            maxTicksLimit: 10
+                        }
+                    },
+                    y: {
+                        display: true,
+                        title: {
+                            display: true,
+                            text: 'Variação (R$)'
+                        },
+                        beginAtZero: true
+                    }
+                }
+            }
+        })
         valorInvestidoInput.value = 'R$ ' + valorInvestido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })
     })
-
     valorInvestidoInput.addEventListener('input', (event) => {
         let valor = event.target.value.replace(/\D/g, '')
         valor = (valor / 100).toFixed(2).replace('.', ',')
         valor = valor.replace(/(\d)(?=(\d{3})+(?!\d))/g, '$1.')
         event.target.value = `R$ ${valor}`
     })
-
     periodoDiasInput.addEventListener('input', (event) => {
         let valor = event.target.value.replace(/\D/g, '')
         event.target.value = valor
